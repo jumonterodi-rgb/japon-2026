@@ -10943,48 +10943,79 @@ function toggleHanedaCheck(label, id) {
 
 <script>
 // ============================================================
-// SINCRONIZACION CON GOOGLE APPS SCRIPT
+// PERSISTENCIA: localStorage (principal) + Google Apps Script (backup)
 // ============================================================
 var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxLKnCbvzoOO5T0BBH1DpltqWQARugQBA6MkGn92RERiH6At3jxsKWkO0W7kYZ_E_vLEg/exec';
+var LS_KEY_CB = 'japon2026_checkboxes';
+var LS_KEY_TX = 'japon2026_diario';
 
-// --- Guardar checkbox (no-cors, fire and forget) ---
+// --- localStorage helpers ---
+function lsGetCB() { try { return JSON.parse(localStorage.getItem(LS_KEY_CB) || '{}'); } catch(e) { return {}; } }
+function lsSetCB(id, valor) { try { var d = lsGetCB(); d[id] = valor; localStorage.setItem(LS_KEY_CB, JSON.stringify(d)); } catch(e) {} }
+function lsGetTX() { try { return JSON.parse(localStorage.getItem(LS_KEY_TX) || '{}'); } catch(e) { return {}; } }
+function lsSetTX(id, texto) { try { var d = lsGetTX(); d[id] = texto; localStorage.setItem(LS_KEY_TX, JSON.stringify(d)); } catch(e) {} }
+
+// --- Guardar checkbox: localStorage inmediato + Apps Script async ---
 function guardarCheckbox(id, valor) {
+  lsSetCB(id, valor);
   var url = SCRIPT_URL + '?action=checkbox&id=' + encodeURIComponent(id) + '&valor=' + encodeURIComponent(String(valor));
-  fetch(url, { method: 'GET', mode: 'no-cors' })
-    .catch(function(e) { console.log('Error checkbox:', e); });
+  fetch(url, { method: 'GET', mode: 'no-cors' }).catch(function() {});
 }
 
-// --- Guardar textarea (no-cors, con debounce 1.5s) ---
+// --- Guardar textarea: localStorage inmediato + Apps Script con debounce ---
 var timers = {};
 function guardarTextarea(id, texto) {
+  lsSetTX(id, texto);
   clearTimeout(timers[id]);
   timers[id] = setTimeout(function() {
     var url = SCRIPT_URL + '?action=diario&id=' + encodeURIComponent(id) + '&texto=' + encodeURIComponent(texto);
-    fetch(url, { method: 'GET', mode: 'no-cors' })
-      .catch(function(e) { console.log('Error textarea:', e); });
+    fetch(url, { method: 'GET', mode: 'no-cors' }).catch(function() {});
   }, 1500);
 }
 
-// --- Cargar estados (via script tag para evitar CORS) ---
+// --- Cargar estados: localStorage primero, luego Apps Script si disponible ---
 function cargarEstados() {
-  var script = document.createElement('script');
-  script.src = SCRIPT_URL + '?action=cargar&callback=recibirDatos&t=' + Date.now();
-  document.head.appendChild(script);
+  // 1. Restaurar desde localStorage (inmediato, funciona en móvil sin red)
+  var cbs = lsGetCB();
+  Object.keys(cbs).forEach(function(id) {
+    document.querySelectorAll('input[type="checkbox"][id="' + id + '"]').forEach(function(el) {
+      el.checked = cbs[id];
+    });
+  });
+  var txs = lsGetTX();
+  Object.keys(txs).forEach(function(id) {
+    document.querySelectorAll('textarea[id="' + id + '"]').forEach(function(el) {
+      el.value = txs[id];
+    });
+  });
+
+  // 2. Intentar sincronizar con Apps Script (puede fallar en móvil, no pasa nada)
+  try {
+    var script = document.createElement('script');
+    script.src = SCRIPT_URL + '?action=cargar&callback=recibirDatos&t=' + Date.now();
+    script.onerror = function() {};
+    document.head.appendChild(script);
+  } catch(e) {}
 }
 
 function recibirDatos(data) {
   if (data.checkboxes) {
     data.checkboxes.forEach(function(item) {
+      var valor = (item.valor === 'true' || item.valor === true);
+      lsSetCB(item.id, valor);
       document.querySelectorAll('input[type="checkbox"][id="' + item.id + '"]').forEach(function(el) {
-        el.checked = (item.valor === 'true' || item.valor === true);
+        el.checked = valor;
       });
     });
   }
   if (data.diario) {
     data.diario.forEach(function(item) {
-      document.querySelectorAll('textarea[id="' + item.id + '"]').forEach(function(el) {
-        el.value = item.texto;
-      });
+      if (item.texto) {
+        lsSetTX(item.id, item.texto);
+        document.querySelectorAll('textarea[id="' + item.id + '"]').forEach(function(el) {
+          el.value = item.texto;
+        });
+      }
     });
   }
 }
@@ -11016,7 +11047,7 @@ function inicializarTextareas() {
 document.addEventListener('DOMContentLoaded', function() {
   inicializarCheckboxes();
   inicializarTextareas();
-  cargarEstados();
+  setTimeout(cargarEstados, 300);
 });
 </script>
 
